@@ -28,3 +28,12 @@ Grafik menampilkan candle berjalan dan polling endpoint `/api/live-candle` setia
 
 ## v3.9 Lonjakan 15m
 Panel teratas memantau 60 pasangan USDT MEXC Spot dengan volume terbesar, setiap ~60 detik (cache server 60 detik). Ambang +3% dibanding penutupan candle sebelumnya dengan harga candle aktif. Ini **bukan** rolling 15 menit yang presisi. Jika API gagal, tampilkan error, bukan lonjakan palsu. Notifikasi browser hanya muncul jika izin telah diberikan secara terpisah; versi ini secara default menampilkan notifikasi di halaman. Tidak ada push saat tab ditutup. Endpoint: GET /api/movers.
+
+
+## v4.0: Perbaikan daftar Futures
+- `/api/futures-catalog` memuat kontrak USDT perpetual aktif dari OKX.
+- Dropdown Spot menggunakan katalog MEXC; dropdown Futures hanya kontrak OKX yang tersedia.
+- Scanner melewati koin tanpa kontrak Futures.
+- API mengembalikan 422 untuk kontrak yang tidak tersedia, bukan sinyal WAIT.
+- Jika katalog OKX gagal dimuat, pilihan Futures dinonaktifkan hingga data tersedia.
+- Dukungan Bybit/Binance tetap fallback, tetapi katalog Futures saat ini menggunakan OKX.
