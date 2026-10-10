@@ -1,21 +1,14 @@
-# CryptoSignal Spot + Futures — Railway MVP
+# CryptoSignal Spot + Futures — Railway v3.1
 
-Website responsif untuk sinyal **Spot BUY/SELL/WAIT** dan **USDT-M Futures LONG/SHORT/WAIT**. Data candle Binance lewat backend Node.js (`/api/klines`), tanpa API key dan tanpa eksekusi order.
+Perbaikan HTTP 502: backend mencoba beberapa endpoint Binance secara berurutan, mencatat error per provider di Deploy Logs, dan menyediakan cache singkat. Spot memiliki fallback Binance US (harga/volume bisa berbeda dari Binance global). Futures **tidak** fallback ke Spot karena datanya berbeda.
 
-## Deploy ke Railway
-1. Upload **isi folder ini** ke root repository GitHub (`index.html`, `server.js`, `Dockerfile`, `README.md`).
-2. Railway → New Project → Deploy from GitHub repo → pilih repository.
-3. Railway membaca Dockerfile secara otomatis. Setelah deploy, buka service → Settings → Networking → Generate Domain.
-4. Kunjungi domain tersebut; pilih market Spot atau Futures USDT-M dan tekan Analisis sekarang.
+## Deploy
+1. Ekstrak ZIP dan upload semua file (`index.html`, `server.js`, `Dockerfile`, `.nojekyll`, `README.md`) ke root repository GitHub.
+2. Commit ke branch yang terhubung dengan Railway; tunggu deployment berhasil.
+3. Buka `/health` pada domain Railway untuk memastikan server berjalan.
+4. Buka website, pilih Spot/Futures dan tekan Analisis sekarang.
+5. Jika tetap HTTP 502, buka Railway > service > Deploy Logs dan cari `Data provider failed` / `All providers failed`.
 
-## Data & logika
-- Spot: `https://api.binance.com/api/v3/klines`; Futures: `https://fapi.binance.com/fapi/v1/klines`. Server memvalidasi market, simbol, dan timeframe lalu meneruskan permintaan.
-- Candle belum tertutup diabaikan. Konfirmasi: EMA20/50, RSI14, MACD histogram, volume vs rata-rata 20 candle.
-- Spot: BUY/SELL/WAIT. Futures: LONG/SHORT/WAIT. SHORT memakai level stop di atas entry dan target di bawah entry.
-- Backtest yang ada hanya untuk spot, dinonaktifkan saat memilih futures agar tidak menyajikan hasil keliru.
+Railway menggunakan Dockerfile yang ada. Tidak perlu environment variable maupun API key.
 
-## Batasan penting
-Tidak ada order otomatis, akun, leverage, liquidation price, funding rate, open interest, slippage, spread atau backtest futures. Sinyal bukan jaminan profit. Binance dapat memblokir akses dari IP Railway tertentu.
-
-## Jalankan lokal
-Memerlukan Node.js 22+. Jalankan `node server.js` lalu buka `http://localhost:3000`.
+**Catatan:** Endpoint futures bisa tetap gagal karena pembatasan IP/wilayah. Ini bukan jaminan pemulihan. Bila semua endpoint futures diblokir, diperlukan provider futures lain dengan data OHLCV yang kompatibel. Data Spot Binance US tidak identik dengan Binance global. Tidak ada transaksi otomatis; sinyal bukan rekomendasi investasi. Backtest futures belum tersedia.
