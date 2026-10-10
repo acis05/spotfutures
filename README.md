@@ -1,14 +1,7 @@
-# CryptoSignal Spot + Futures — Railway v3.1
+# CryptoSignal v3.2 Railway
 
-Perbaikan HTTP 502: backend mencoba beberapa endpoint Binance secara berurutan, mencatat error per provider di Deploy Logs, dan menyediakan cache singkat. Spot memiliki fallback Binance US (harga/volume bisa berbeda dari Binance global). Futures **tidak** fallback ke Spot karena datanya berbeda.
+Upload file di folder ini ke root repo GitHub. Railway deploy via Dockerfile. Endpoint `/health` untuk cek server.
 
-## Deploy
-1. Ekstrak ZIP dan upload semua file (`index.html`, `server.js`, `Dockerfile`, `.nojekyll`, `README.md`) ke root repository GitHub.
-2. Commit ke branch yang terhubung dengan Railway; tunggu deployment berhasil.
-3. Buka `/health` pada domain Railway untuk memastikan server berjalan.
-4. Buka website, pilih Spot/Futures dan tekan Analisis sekarang.
-5. Jika tetap HTTP 502, buka Railway > service > Deploy Logs dan cari `Data provider failed` / `All providers failed`.
+Spot: Binance Spot Data, Binance, OKX. Futures USDT-M: Bybit linear perpetual, Binance Futures, OKX perpetual swap. **Sumber futures berbeda dari Binance; harga dan volume bisa berbeda.** Tidak semua coin tersedia pada semua provider. Ketersediaan jaringan Railway belum diuji.
 
-Railway menggunakan Dockerfile yang ada. Tidak perlu environment variable maupun API key.
-
-**Catatan:** Endpoint futures bisa tetap gagal karena pembatasan IP/wilayah. Ini bukan jaminan pemulihan. Bila semua endpoint futures diblokir, diperlukan provider futures lain dengan data OHLCV yang kompatibel. Data Spot Binance US tidak identik dengan Binance global. Tidak ada transaksi otomatis; sinyal bukan rekomendasi investasi. Backtest futures belum tersedia.
+Sinyal memakai EMA, RSI, MACD, volume. Status DATA ERROR dibedakan dari WAIT. Backtest Spot masih memakai strategi lama dan **tidak sama dengan sinyal baru**. Tidak ada trading otomatis, tidak ada jaminan profit.

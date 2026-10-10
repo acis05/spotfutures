@@ -1,40 +1,17 @@
-const http=require('node:http');
-const fs=require('node:fs');
-const path=require('node:path');
-const port=Number(process.env.PORT||3000);
-const html=fs.readFileSync(path.join(__dirname,'index.html'));
-const symbols=new Set(['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT','DOGEUSDT']);
-const intervals=new Set(['15m','1h','4h','1d']);
-const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
-const providers={
- spot:[['Binance Spot','https://api.binance.com/api/v3/klines'],['Binance Spot Data','https://data-api.binance.vision/api/v3/klines'],['Binance US Spot','https://api.binance.us/api/v3/klines']],
- futures:[['Binance Futures','https://fapi.binance.com/fapi/v1/klines'],['Binance Futures 1','https://fapi1.binance.com/fapi/v1/klines'],['Binance Futures 2','https://fapi2.binance.com/fapi/v1/klines']]
-};
-const cache=new Map();
-http.createServer(async(req,res)=>{
- const url=new URL(req.url,'http://localhost');
- if(url.pathname==='/'||url.pathname==='/index.html'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});return res.end(html)}
- if(url.pathname==='/favicon.ico'){res.writeHead(204);return res.end()}
- if(url.pathname==='/health')return send(res,200,{status:'ok'});
- if(url.pathname!=='/api/klines')return send(res,404,{error:'Not found'});
- const market=url.searchParams.get('market'),symbol=url.searchParams.get('symbol'),interval=url.searchParams.get('interval');
- if(!providers[market]||!symbols.has(symbol)||!intervals.has(interval))return send(res,400,{error:'Invalid market, symbol or interval'});
- const key=`${market}:${symbol}:${interval}`,cached=cache.get(key);
- if(cached&&Date.now()-cached.time<30000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true});
- const failures=[];
- for(const [name,base] of providers[market]){
-  try{
-   const target=`${base}?symbol=${symbol}&interval=${interval}&limit=200`;
-   const response=await fetch(target,{signal:AbortSignal.timeout(6500),headers:{Accept:'application/json','User-Agent':'CryptoSignal-MVP/3.1'}});
-   if(!response.ok)throw Error(`HTTP ${response.status}`);
-   const rows=await response.json();
-   if(!Array.isArray(rows)||rows.length<80||!rows.every(r=>Array.isArray(r)&&r.length>=7&&Number.isFinite(Number(r[4]))))throw Error('Invalid candle payload');
-   cache.set(key,{rows,source:name,time:Date.now()});
-   console.log(`Data OK ${market} ${symbol} via ${name}`);
-   return send(res,200,{rows,source:name,cached:false});
-  }catch(e){failures.push(`${name}: ${e.message}`);console.warn(`Data provider failed: ${market} ${name}: ${e.message}`)}
- }
- if(cached&&Date.now()-cached.time<300000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true,stale:true});
- console.error(`All providers failed ${market} ${symbol}: ${failures.join(' | ')}`);
- return send(res,502,{error:'Semua sumber data gagal',details:failures});
-}).listen(port,'0.0.0.0',()=>console.log(`CryptoSignal listening on ${port}`));
+const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
+const port=Number(process.env.PORT||3000),html=fs.readFileSync(path.join(__dirname,'index.html'));
+const coins='BTC ETH SOL BNB XRP ADA DOGE AVAX LINK DOT LTC BCH TRX TON SHIB PEPE SUI NEAR APT ARB OP INJ UNI AAVE ETC ATOM FIL ICP RENDER FET WIF BONK SEI TIA JUP GALA SAND MANA ALGO HBAR XLM VET EOS RUNE PENDLE ENA WLD CRV DYDX'.split(' ');
+const symbols=new Set(coins.map(x=>x+'USDT')),intervals=new Set(['15m','1h','4h','1d']);
+const cache=new Map();const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(body))};
+const intervalMs={'15m':900000,'1h':3600000,'4h':14400000,'1d':86400000};
+function validate(rows){if(!Array.isArray(rows)||rows.length<80)throw Error('Candle kurang dari 80');rows.sort((a,b)=>+a[0]-+b[0]);if(!rows.every(r=>Array.isArray(r)&&r.length>=7&&[0,1,2,3,4,5,6].every(i=>Number.isFinite(Number(r[i])))&&Number(r[4])>0))throw Error('Payload candle tidak valid');return rows}
+async function request(url){const response=await fetch(url,{signal:AbortSignal.timeout(6500),headers:{Accept:'application/json','User-Agent':'CryptoSignal/3.2'}});if(!response.ok)throw Error('HTTP '+response.status);let text=await response.text();if(!text.trim())throw Error('Respons kosong');try{return JSON.parse(text)}catch{throw Error('JSON tidak valid')}}
+function binance(data){return validate(data)}
+function bybit(data,interval){if(data.retCode!==0||!Array.isArray(data.result?.list))throw Error(data.retMsg||'Bybit payload error');return validate(data.result.list.map(r=>{let t=+r[0];return [t,r[1],r[2],r[3],r[4],r[5],t+intervalMs[interval]-1]}))}
+function okx(data,interval){if(data.code!=='0'||!Array.isArray(data.data))throw Error(data.msg||'OKX payload error');return validate(data.data.map(r=>{let t=+r[0];return [t,r[1],r[2],r[3],r[4],r[5],t+intervalMs[interval]-1]}))}
+function providers(market,symbol,interval){const q=`symbol=${symbol}&interval=${interval}&limit=200`;const inst=symbol.slice(0,-4)+'-USDT'+(market==='futures'?'-SWAP':'');const okxBar={'15m':'15m','1h':'1H','4h':'4H','1d':'1D'}[interval];const bybitInterval={'15m':'15','1h':'60','4h':'240','1d':'D'}[interval];let out=[];
+if(market==='spot')out.push(['Binance Spot Data',`https://data-api.binance.vision/api/v3/klines?${q}`,binance],['Binance Spot',`https://api.binance.com/api/v3/klines?${q}`,binance]);
+else out.push(['Bybit Linear Futures',`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=200`,d=>bybit(d,interval)],['Binance Futures',`https://fapi.binance.com/fapi/v1/klines?${q}`,binance]);
+out.push(['OKX '+(market==='futures'?'Perpetual Swap':'Spot'),`https://www.okx.com/api/v5/market/history-candles?instId=${inst}&bar=${okxBar}&limit=200`,d=>okx(d,interval)]);
+return out}
+http.createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');if(url.pathname==='/'||url.pathname==='/index.html'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html)}if(url.pathname==='/favicon.ico'){res.writeHead(204);return res.end()}if(url.pathname==='/health')return send(res,200,{status:'ok',version:'3.2'});if(url.pathname!=='/api/klines')return send(res,404,{error:'Not found'});let market=url.searchParams.get('market'),symbol=url.searchParams.get('symbol'),interval=url.searchParams.get('interval');if(!['spot','futures'].includes(market)||!symbols.has(symbol)||!intervals.has(interval))return send(res,400,{error:'Parameter tidak valid'});let key=`${market}:${symbol}:${interval}`,cached=cache.get(key);if(cached&&Date.now()-cached.time<30000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true});let failures=[];for(let [name,target,convert] of providers(market,symbol,interval)){try{let rows=convert(await request(target));cache.set(key,{rows,source:name,time:Date.now()});console.log(`Data OK ${market} ${symbol} via ${name}`);return send(res,200,{rows,source:name,cached:false})}catch(e){failures.push(name+': '+e.message);console.warn('Data provider failed:',market,name,e.message)}}if(cached&&Date.now()-cached.time<300000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true,stale:true});console.error('All providers failed',market,symbol,failures.join(' | '));return send(res,502,{error:'Semua penyedia gagal; cek Deploy Logs',details:failures})}).listen(port,'0.0.0.0',()=>console.log('CryptoSignal v3.2 listening on '+port));
