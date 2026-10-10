@@ -24,3 +24,7 @@ API publik dapat dibatasi secara geografis atau rate limit. Belum diuji live di 
 
 ## v3.8 Live candle
 Grafik menampilkan candle berjalan dan polling endpoint `/api/live-candle` setiap 10 detik (bukan tick-by-tick WebSocket). Indikator dan sinyal tetap berdasarkan candle tertutup dan diperbarui ketika tombol Analisis ditekan. Jika sumber data terblokir atau hanya menyajikan candle tertutup, status LIVE akan menampilkan error atau data tertunda. Tidak ada data harga sintetis. Scanner tetap snapshot.
+
+
+## v3.9 Lonjakan 15m
+Panel teratas memantau 60 pasangan USDT MEXC Spot dengan volume terbesar, setiap ~60 detik (cache server 60 detik). Ambang +3% dibanding penutupan candle sebelumnya dengan harga candle aktif. Ini **bukan** rolling 15 menit yang presisi. Jika API gagal, tampilkan error, bukan lonjakan palsu. Notifikasi browser hanya muncul jika izin telah diberikan secara terpisah; versi ini secara default menampilkan notifikasi di halaman. Tidak ada push saat tab ditutup. Endpoint: GET /api/movers.

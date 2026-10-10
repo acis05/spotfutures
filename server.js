@@ -36,7 +36,33 @@ async function catalog(force=false){
   console.log('MEXC catalog loaded:',sorted.length,'pairs');return {...catalogCache,cache:false};
  }catch(e){console.warn('MEXC catalog failed:',e.message);if(catalogCache)return {...catalogCache,cache:true,stale:true,warning:e.message};throw e}
 }
-http.createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');if(url.pathname==='/'||url.pathname==='/index.html'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html)}if(url.pathname==='/favicon.ico'){res.writeHead(204);return res.end()}if(url.pathname==='/health')return send(res,200,{status:'ok',version:'3.8'});if(url.pathname==='/api/catalog'){
+
+// 15-minute price surge watcher. This is a sampled watchlist, not all MEXC listings.
+let moversCache=null, moversPending=null;
+async function movers(){
+ if(moversCache&&Date.now()-moversCache.time<60000)return {...moversCache,cache:true};
+ if(moversPending)return moversPending;
+ moversPending=(async()=>{
+  const c=await catalog();const selected=c.symbols.slice(0,60);let cursor=0,failed=0;const found=[];
+  async function worker(){while(cursor<selected.length){const symbol=selected[cursor++];try{
+   const data=await request(`https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=3`);
+   if(!Array.isArray(data)||data.length<2)throw Error('Candle kurang');
+   const rows=[...data].sort((a,b)=>Number(a[0])-Number(b[0]));
+   // Last row may be live; compare its last traded close with preceding candle close.
+   const prev=Number(rows.at(-2)[4]),last=Number(rows.at(-1)[4]);
+   if(!(prev>0&&last>0))throw Error('Harga tidak valid');
+   const change=(last/prev-1)*100;
+   if(change>=3)found.push({symbol,changePct:+change.toFixed(2),price:last,volume24h:c.volumes[symbol]||0,observedAt:Date.now()});
+  }catch(e){failed++}}}
+  await Promise.all(Array.from({length:5},worker));
+  found.sort((a,b)=>b.changePct-a.changePct);
+  moversCache={items:found.slice(0,15),thresholdPct:3,scanned:selected.length,failed,source:'MEXC Spot 15m candles',time:Date.now(),note:'Perubahan dari penutupan candle 15m sebelumnya ke harga candle aktif; bukan jendela rolling tepat 15 menit.'};
+  return moversCache;
+ })();
+ try{return await moversPending}finally{moversPending=null}
+}
+
+http.createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');if(url.pathname==='/'||url.pathname==='/index.html'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html)}if(url.pathname==='/favicon.ico'){res.writeHead(204);return res.end()}if(url.pathname==='/health')return send(res,200,{status:'ok',version:'3.9'});if(url.pathname==='/api/movers'){try{return send(res,200,await movers())}catch(e){return send(res,503,{error:'Pemantau lonjakan belum tersedia',details:e.message})}}if(url.pathname==='/api/catalog'){
  try{const data=await catalog();return send(res,200,data)}catch(e){return send(res,503,{error:'Katalog MEXC tidak tersedia',details:e.message})}
 }
 if(url.pathname==='/api/spreads'){
@@ -47,4 +73,4 @@ if(url.pathname==='/api/spreads'){
   return send(res,200,{source:'MEXC Spot bookTicker',spreads,updatedAt:Date.now()});
  }catch(e){return send(res,503,{error:'Spread tidak tersedia',details:e.message})}
 }
-if(!['/api/klines','/api/live-candle'].includes(url.pathname))return send(res,404,{error:'Not found'});let market=url.searchParams.get('market'),symbol=url.searchParams.get('symbol'),interval=url.searchParams.get('interval');if(!['spot','futures'].includes(market)||(!symbols.has(symbol)&&!(catalogCache&&catalogCache.symbols.includes(symbol)&&market==='spot'))||!intervals.has(interval))return send(res,400,{error:'Parameter tidak valid'});let live=url.pathname==='/api/live-candle';let key=`${market}:${symbol}:${interval}`,cached=cache.get(key);if(cached&&Date.now()-cached.time<(live?4000:30000))return send(res,200,{rows:live?cached.rows.slice(-2):cached.rows,source:cached.source,cached:true,updatedAt:cached.time});let failures=[];for(let [name,target,convert] of providers(market,symbol,interval)){try{let rows=convert(await request(target));cache.set(key,{rows,source:name,time:Date.now()});console.log(`Data OK ${market} ${symbol} via ${name}`);return send(res,200,{rows:live?rows.slice(-2):rows,source:name,cached:false,updatedAt:Date.now()})}catch(e){failures.push(name+': '+e.message);console.warn('Data provider failed:',market,name,e.message)}}if(cached&&Date.now()-cached.time<(live?300000:300000))return send(res,200,{rows:live?cached.rows.slice(-2):cached.rows,source:cached.source,cached:true,stale:true,updatedAt:cached.time});console.error('All providers failed',market,symbol,failures.join(' | '));return send(res,502,{error:'Semua penyedia gagal; cek Deploy Logs',details:failures})}).listen(port,'0.0.0.0',()=>console.log('CryptoSignal v3.8 listening on '+port));
+if(!['/api/klines','/api/live-candle'].includes(url.pathname))return send(res,404,{error:'Not found'});let market=url.searchParams.get('market'),symbol=url.searchParams.get('symbol'),interval=url.searchParams.get('interval');if(!['spot','futures'].includes(market)||(!symbols.has(symbol)&&!(catalogCache&&catalogCache.symbols.includes(symbol)&&market==='spot'))||!intervals.has(interval))return send(res,400,{error:'Parameter tidak valid'});let live=url.pathname==='/api/live-candle';let key=`${market}:${symbol}:${interval}`,cached=cache.get(key);if(cached&&Date.now()-cached.time<(live?4000:30000))return send(res,200,{rows:live?cached.rows.slice(-2):cached.rows,source:cached.source,cached:true,updatedAt:cached.time});let failures=[];for(let [name,target,convert] of providers(market,symbol,interval)){try{let rows=convert(await request(target));cache.set(key,{rows,source:name,time:Date.now()});console.log(`Data OK ${market} ${symbol} via ${name}`);return send(res,200,{rows:live?rows.slice(-2):rows,source:name,cached:false,updatedAt:Date.now()})}catch(e){failures.push(name+': '+e.message);console.warn('Data provider failed:',market,name,e.message)}}if(cached&&Date.now()-cached.time<(live?300000:300000))return send(res,200,{rows:live?cached.rows.slice(-2):cached.rows,source:cached.source,cached:true,stale:true,updatedAt:cached.time});console.error('All providers failed',market,symbol,failures.join(' | '));return send(res,502,{error:'Semua penyedia gagal; cek Deploy Logs',details:failures})}).listen(port,'0.0.0.0',()=>console.log('CryptoSignal v3.9 listening on '+port));
