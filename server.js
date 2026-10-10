@@ -15,4 +15,36 @@ if(market==='spot')out.push(['Binance Spot Data',`https://data-api.binance.visio
 else out.push(['Bybit Linear Futures',`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=200`,d=>bybit(d,interval)],['Binance Futures',`https://fapi.binance.com/fapi/v1/klines?${q}`,binance]);
 out.push(['OKX '+(market==='futures'?'Perpetual Swap':'Spot'),`https://www.okx.com/api/v5/market/history-candles?instId=${inst}&bar=${okxBar}&limit=200`,d=>okx(d,interval)]);
 return out}
-http.createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');if(url.pathname==='/'||url.pathname==='/index.html'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html)}if(url.pathname==='/favicon.ico'){res.writeHead(204);return res.end()}if(url.pathname==='/health')return send(res,200,{status:'ok',version:'3.4'});if(url.pathname!=='/api/klines')return send(res,404,{error:'Not found'});let market=url.searchParams.get('market'),symbol=url.searchParams.get('symbol'),interval=url.searchParams.get('interval');if(!['spot','futures'].includes(market)||!symbols.has(symbol)||!intervals.has(interval))return send(res,400,{error:'Parameter tidak valid'});let key=`${market}:${symbol}:${interval}`,cached=cache.get(key);if(cached&&Date.now()-cached.time<30000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true});let failures=[];for(let [name,target,convert] of providers(market,symbol,interval)){try{let rows=convert(await request(target));cache.set(key,{rows,source:name,time:Date.now()});console.log(`Data OK ${market} ${symbol} via ${name}`);return send(res,200,{rows,source:name,cached:false})}catch(e){failures.push(name+': '+e.message);console.warn('Data provider failed:',market,name,e.message)}}if(cached&&Date.now()-cached.time<300000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true,stale:true});console.error('All providers failed',market,symbol,failures.join(' | '));return send(res,502,{error:'Semua penyedia gagal; cek Deploy Logs',details:failures})}).listen(port,'0.0.0.0',()=>console.log('CryptoSignal v3.4 listening on '+port));
+// Dynamic MEXC spot catalog; cached for 15 minutes, stale cache used if MEXC is unreachable.
+let catalogCache=null;
+const CATALOG_TTL=15*60*1000;
+async function catalog(force=false){
+ if(!force&&catalogCache&&Date.now()-catalogCache.time<CATALOG_TTL)return {...catalogCache,cache:true};
+ try{
+  const info=await request('https://api.mexc.com/api/v3/exchangeInfo');
+  if(!Array.isArray(info.symbols))throw Error('Daftar simbol MEXC tidak valid');
+  const list=info.symbols.filter(x=>x&&x.quoteAsset==='USDT'&&/^[A-Z0-9]{2,32}USDT$/.test(x.symbol)&&
+    (x.status==='ENABLED'||x.status==='1'||x.status===1||x.status==='TRADING')&&
+    !/(?:3L|3S|5L|5S|2L|2S|BULL|BEAR)USDT$/.test(x.symbol))
+    .map(x=>x.symbol);
+  if(!list.length)throw Error('Tidak ada pasangan USDT aktif');
+  let tickers=[];try{let t=await request('https://api.mexc.com/api/v3/ticker/24hr');tickers=Array.isArray(t)?t:[]}catch(e){console.warn('MEXC ticker unavailable:',e.message)}
+  const allowed=new Set(list),volumes=new Map();
+  for(const t of tickers){if(!allowed.has(t.symbol))continue;let q=Number(t.quoteVolume);if(!(q>0)){const base=Number(t.volume),last=Number(t.lastPrice);q=base>0&&last>0?base*last:0}volumes.set(t.symbol,q)}
+  const sorted=[...new Set(list)].sort((a,b)=>(volumes.get(b)||0)-(volumes.get(a)||0)||a.localeCompare(b));
+  catalogCache={symbols:sorted,volumes:Object.fromEntries(sorted.map(x=>[x,volumes.get(x)||0])),source:'MEXC Spot',time:Date.now(),count:sorted.length,hasVolume:volumes.size>0};
+  console.log('MEXC catalog loaded:',sorted.length,'pairs');return {...catalogCache,cache:false};
+ }catch(e){console.warn('MEXC catalog failed:',e.message);if(catalogCache)return {...catalogCache,cache:true,stale:true,warning:e.message};throw e}
+}
+http.createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');if(url.pathname==='/'||url.pathname==='/index.html'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html)}if(url.pathname==='/favicon.ico'){res.writeHead(204);return res.end()}if(url.pathname==='/health')return send(res,200,{status:'ok',version:'3.7'});if(url.pathname==='/api/catalog'){
+ try{const data=await catalog();return send(res,200,data)}catch(e){return send(res,503,{error:'Katalog MEXC tidak tersedia',details:e.message})}
+}
+if(url.pathname==='/api/spreads'){
+ try{
+  const raw=await request('https://api.mexc.com/api/v3/ticker/bookTicker');
+  if(!Array.isArray(raw))throw Error('Format bookTicker tidak valid');
+  const spreads={};for(const t of raw){const bid=Number(t.bidPrice),ask=Number(t.askPrice);if(typeof t.symbol==='string'&&bid>0&&ask>=bid)spreads[t.symbol]=+(200*(ask-bid)/(ask+bid)).toFixed(5)}
+  return send(res,200,{source:'MEXC Spot bookTicker',spreads,updatedAt:Date.now()});
+ }catch(e){return send(res,503,{error:'Spread tidak tersedia',details:e.message})}
+}
+if(url.pathname!=='/api/klines')return send(res,404,{error:'Not found'});let market=url.searchParams.get('market'),symbol=url.searchParams.get('symbol'),interval=url.searchParams.get('interval');if(!['spot','futures'].includes(market)||(!symbols.has(symbol)&&!(catalogCache&&catalogCache.symbols.includes(symbol)&&market==='spot'))||!intervals.has(interval))return send(res,400,{error:'Parameter tidak valid'});let key=`${market}:${symbol}:${interval}`,cached=cache.get(key);if(cached&&Date.now()-cached.time<30000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true});let failures=[];for(let [name,target,convert] of providers(market,symbol,interval)){try{let rows=convert(await request(target));cache.set(key,{rows,source:name,time:Date.now()});console.log(`Data OK ${market} ${symbol} via ${name}`);return send(res,200,{rows,source:name,cached:false})}catch(e){failures.push(name+': '+e.message);console.warn('Data provider failed:',market,name,e.message)}}if(cached&&Date.now()-cached.time<300000)return send(res,200,{rows:cached.rows,source:cached.source,cached:true,stale:true});console.error('All providers failed',market,symbol,failures.join(' | '));return send(res,502,{error:'Semua penyedia gagal; cek Deploy Logs',details:failures})}).listen(port,'0.0.0.0',()=>console.log('CryptoSignal v3.7 listening on '+port));
