@@ -20,3 +20,7 @@ API publik dapat dibatasi secara geografis atau rate limit. Belum diuji live di 
 - Spread futures **bukan** spread Spot. Filter spread ini hanya proksi likuiditas untuk futures.
 - Jika data spread gagal, kandidat tidak lolos filter spread kecuali filter dinonaktifkan. Jika volume tidak tersedia, kandidat gagal filter volume positif.
 - Scanner bisa menampilkan kurang dari 10 sinyal. Tidak ada jaminan profit atau validasi performa strategi.
+
+
+## v3.8 Live candle
+Grafik menampilkan candle berjalan dan polling endpoint `/api/live-candle` setiap 10 detik (bukan tick-by-tick WebSocket). Indikator dan sinyal tetap berdasarkan candle tertutup dan diperbarui ketika tombol Analisis ditekan. Jika sumber data terblokir atau hanya menyajikan candle tertutup, status LIVE akan menampilkan error atau data tertunda. Tidak ada data harga sintetis. Scanner tetap snapshot.
